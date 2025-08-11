@@ -32,7 +32,7 @@ static int ctrl_n = 0;
 
 static P3 spline_samples[MAX_SAMPLES];
 static int sample_n = 0;
-static int show_spline = 1;
+//static int show_spline = 1;
 
 /* --- Utilities --- */
 
