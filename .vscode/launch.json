@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug CADGui",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/motif_glx_spline",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "啟用 GDB pretty printing",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build CADGui (make)",
+            "miDebuggerPath": "/usr/bin/gdb"
+        }
+    ]
+}

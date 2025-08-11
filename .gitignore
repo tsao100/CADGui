@@ -1,3 +1,9 @@
 cad_fortran.o
 cad_gui.o
 cad_spline
+motif_glx_spline
+.gitignore
+.gitignore
+pslib.o
+tinyspline.o
+motif_glx_spline.o
