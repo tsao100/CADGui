@@ -1,6 +1,10 @@
 {
     "files.associations": {
         "gl.h": "c",
-        "pushb.h": "c"
+        "pushb.h": "c",
+        "mainw.h": "c",
+        "rowcolumn.h": "c",
+        "scrollbar.h": "c",
+        "xm.h": "c"
     }
 }

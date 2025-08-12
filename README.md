@@ -26,3 +26,5 @@ Controls (while window focused):
 Notes:
   - This project uses an internal Catmull-Rom sampler (no TinySpline required).
   - If you want to integrate TinySpline, modify cad_gui.c to call tinyspline APIs and link to libtinyspline.
+
+  gcc -g mainwindow_demo.c -o mainwindow_demo -lXm -lXt -lX11 -lGL -lGLU -lXext
