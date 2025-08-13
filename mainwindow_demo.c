@@ -1,5 +1,79 @@
-#define TEST001
+#define TEST008
 #ifdef TEST00N
+#endif
+#ifdef TEST008 //freeglut (./mainwindow_demo):  ERROR:  Function <glutPostRedisplay> called with no current window defined.
+#include <Xm/Xm.h>
+#include <Xm/MainW.h>
+#include <Xm/DrawingA.h>
+#include <GL/freeglut.h>
+#include <GL/freeglut_ext.h>
+//#include <GL/glut.h>
+#include <GL/glx.h>
+#include <stdio.h>
+
+static Display *dpy;
+static Window win;
+
+void display(void)
+{
+    glClearColor(0.1, 0.1, 0.3, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBegin(GL_TRIANGLES);
+        glColor3f(1, 0, 0); glVertex2f(-0.6, -0.4);
+        glColor3f(0, 1, 0); glVertex2f( 0.6, -0.4);
+        glColor3f(0, 0, 1); glVertex2f( 0.0,  0.6);
+    glEnd();
+
+    glutSwapBuffers();
+}
+
+void realize_cb(Widget w, XtPointer client, XtPointer call)
+{
+    dpy = XtDisplay(w);
+    win = XtWindow(w);
+
+    /* Tell GLUT to use this Display/Window */
+    glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
+    glutSetWindowData((void*)w); // optional data
+    glutSetWindow(glutCreateSubWindow(win, 0, 0, 800, 600));
+
+    glutDisplayFunc(display);
+}
+
+int main(int argc, char **argv)
+{
+    XtAppContext app;
+    Widget toplevel, mainwin, gl_area;
+
+    /* Init Xt and GLUT */
+    toplevel = XtVaAppInitialize(&app, "MotifGLUT", NULL, 0, &argc, argv, NULL, NULL);
+    glutInit(&argc, argv);
+
+    mainwin = XmCreateMainWindow(toplevel, "mainwin", NULL, 0);
+    XtManageChild(mainwin);
+
+    gl_area = XmCreateDrawingArea(mainwin, "glArea", NULL, 0);
+    XtManageChild(gl_area);
+
+    XtAddCallback(gl_area, XmNrealizeCallback, realize_cb, NULL);
+
+    XmMainWindowSetAreas(mainwin, NULL, NULL, NULL, NULL, gl_area);
+
+    XtRealizeWidget(toplevel);
+
+    /* Event loop — drive GLUT manually */
+    while (1) {
+        while (XtAppPending(app)) {
+            XtAppProcessEvent(app, XtIMAll);
+        }
+        glutMainLoopEvent();   /* process any GLUT events */
+        glutPostRedisplay();   /* trigger redraw */
+    }
+
+    return 0;
+}
+
 #endif
 #ifdef TEST007 //Error: XtCreateWidget "glArea" requires non-NULL widget class
 #include <Xm/Xm.h>
