@@ -1,0 +1,24 @@
+CC = gcc
+FC = gfortran
+CFLAGS = -O2 -Wall `pkg-config --cflags x11 gl`
+LDFLAGS = -lX11 -lGL -lGLU
+
+SRCS = pslib.c
+OBJS = $(SRCS:.c=.o) tinyspline.o parson.o
+FSRC = cad_spline.f
+FOBJ = cad_spline.o
+TARGET = spline_test
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS) $(FOBJ)
+	$(FC) -o $(TARGET) $(FOBJ) $(OBJS) $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.f
+	$(FC) -c $< -o $@
+
+clean:
+	rm -f *.o $(TARGET)

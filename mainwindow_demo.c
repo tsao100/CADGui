@@ -1,7 +1,68 @@
-#define TEST006
+#define TEST001
 #ifdef TEST00N
 #endif
-#ifdef TEST006
+#ifdef TEST007 //Error: XtCreateWidget "glArea" requires non-NULL widget class
+#include <Xm/Xm.h>
+#include <Xm/MainW.h>
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include <GL/GLwMDrawA.h>   /* Motif OpenGL DrawingArea widget */
+
+static void expose_cb(Widget w, XtPointer client_data, XtPointer call_data)
+{
+    glClearColor(0.1, 0.1, 0.3, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glBegin(GL_TRIANGLES);
+        glColor3f(1, 0, 0); glVertex3f(-0.6, -0.4, 0);
+        glColor3f(0, 1, 0); glVertex3f( 0.6, -0.4, 0);
+        glColor3f(0, 0, 1); glVertex3f( 0.0,  0.6, 0);
+    glEnd();
+
+    glFlush();
+    GLwDrawingAreaSwapBuffers(w); /* for double buffering */
+}
+
+static void init_cb(Widget w, XtPointer client_data, XtPointer call_data)
+{
+    glEnable(GL_DEPTH_TEST);
+    glViewport(0, 0, 800, 600);
+}
+
+int main(int argc, char **argv)
+{
+    XtAppContext app;
+    Widget toplevel, mainwin, gl_area;
+
+    toplevel = XtVaAppInitialize(&app, "MotifGLwDemo", NULL, 0,
+                                 &argc, argv, NULL, NULL);
+
+    mainwin = XmCreateMainWindow(toplevel, "mainwin", NULL, 0);
+    XtManageChild(mainwin);
+
+    /* Create the OpenGL/Motif DrawingArea */
+    gl_area = XtVaCreateManagedWidget("glArea",
+                                      glwMDrawingAreaWidgetClass, mainwin,
+                                      GLwNrgba, True,
+                                      GLwNdoublebuffer, True,
+                                      GLwNdepthSize, 16,
+                                      XmNwidth, 800,
+                                      XmNheight, 600,
+                                      NULL);
+
+    XtAddCallback(gl_area, GLwNexposeCallback, expose_cb, NULL);
+    XtAddCallback(gl_area, GLwNresizeCallback, init_cb, NULL);
+    XtAddCallback(gl_area, GLwNginitCallback, init_cb, NULL);
+
+    XmMainWindowSetAreas(mainwin, NULL, NULL, NULL, NULL, gl_area);
+
+    XtRealizeWidget(toplevel);
+    XtAppMainLoop(app);
+    return 0;
+}
+
+#endif
+#ifdef TEST006 //X Error of failed request:  BadMatch (invalid parameter attributes)
 #include <Xm/Xm.h>
 #include <Xm/MainW.h>
 #include <Xm/RowColumn.h>
@@ -112,7 +173,7 @@ int main(int argc, char **argv)
 }
 
 #endif
-#ifdef TEST005
+#ifdef TEST005 //Error: XtCreateWidget "glArea" requires non-NULL widget class
 #include <Xm/Xm.h>
 #include <Xm/MainW.h>
 #include <Xm/RowColumn.h>
@@ -221,7 +282,7 @@ int main(int argc, char **argv)
 }
 
 #endif
-#ifdef TEST004
+#ifdef TEST004 //X Error of failed request:  BadMatch (invalid parameter attributes)
 #include <Xm/Xm.h>
 #include <Xm/MainW.h>
 #include <Xm/RowColumn.h>
@@ -335,7 +396,7 @@ int main(int argc, char **argv)
 }
 
 #endif
-#ifdef TEST003
+#ifdef TEST003 //X Error of failed request:  BadColor (invalid Colormap parameter)
 #include <Xm/Xm.h>
 #include <Xm/MainW.h>
 #include <Xm/RowColumn.h>
@@ -461,127 +522,7 @@ int main(int argc, char **argv)
 }
 
 #endif
-#ifdef TEST001
-#include <Xm/Xm.h>
-#include <Xm/RowColumn.h>
-#include <Xm/MainW.h>
-#include <Xm/PushB.h>
-#include <Xm/DrawingA.h>
-#include <Xm/ScrollBar.h>
-#include <GL/gl.h>
-#include <GL/glx.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-/* Globals */
-Display      *dpy;
-GLXContext    glx_ctx;
-Window        glx_win;
-XVisualInfo  *vi;
-Widget        gl_area;
-
-void draw_scene()
-{
-    glClearColor(0.1, 0.1, 0.3, 1.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glBegin(GL_TRIANGLES);
-        glColor3f(1, 0, 0);
-        glVertex3f(-0.6, -0.4, 0);
-        glColor3f(0, 1, 0);
-        glVertex3f(0.6, -0.4, 0);
-        glColor3f(0, 0, 1);
-        glVertex3f(0.0, 0.6, 0);
-    glEnd();
-
-    glXSwapBuffers(dpy, glx_win);
-}
-
-void expose_cb(Widget w, XtPointer client_data, XtPointer call_data)
-{
-    draw_scene();
-}
-
-void realize_cb(Widget w, XtPointer client_data, XtPointer call_data)
-{
-    dpy = XtDisplay(w);
-    glx_win = XtWindow(w);
-    glx_ctx = glXCreateContext(dpy, vi, NULL, GL_TRUE);
-    if (!glx_ctx) {
-        fprintf(stderr, "glXCreateContext failed\n");
-        exit(1);
-    }
-    glXMakeCurrent(dpy, glx_win, glx_ctx);
-
-    glEnable(GL_DEPTH_TEST);
-    glViewport(0, 0, 800, 600);
-}
-
-int main(int argc, char **argv)
-{
-    XtAppContext app;
-    Widget toplevel, mainwin, menubar;
-    Widget hscroll, vscroll;
-    Colormap cmap;
-    Arg args[10];
-    int n = 0;
-
-    int attribs[] = { GLX_RGBA, GLX_DEPTH_SIZE, 16, GLX_DOUBLEBUFFER, None };
-    dpy = XOpenDisplay(NULL);
-    if (!dpy) { fprintf(stderr, "Cannot open display\n"); exit(1); }
-
-    int screen = DefaultScreen(dpy);
-    vi = glXChooseVisual(dpy, screen, attribs);
-    if (!vi) { fprintf(stderr, "No suitable visual found\n"); exit(1); }
-
-    cmap = XCreateColormap(dpy, RootWindow(dpy, vi->screen), vi->visual, AllocNone);
-
-    /* Now create the shell with correct visual/colormap */
-    toplevel = XtVaAppInitialize(
-        &app, "MotifGLX", NULL, 0, &argc, argv, NULL,
-        XmNvisual,   vi->visual,
-        XmNcolormap, cmap,
-        XmNdepth,    vi->depth,
-        NULL
-    );
-
-
-    /* === Step 3: Create main window === */
-    mainwin = XmCreateMainWindow(toplevel, "mainwin", NULL, 0);
-    XtManageChild(mainwin);
-
-    /* === Step 4: Menu bar === */
-    menubar = XmCreateMenuBar(mainwin, "menubar", NULL, 0);
-    XtManageChild(menubar);
-
-    /* === Step 5: Scrollbars === */
-    hscroll = XmCreateScrollBar(mainwin, "hscroll", NULL, 0);
-    vscroll = XmCreateScrollBar(mainwin, "vscroll", NULL, 0);
-
-    /* === Step 6: GL DrawingArea with correct visual === */
-    gl_area = XtVaCreateManagedWidget("glArea",
-                                      xmDrawingAreaWidgetClass, mainwin,
-                                      XmNvisual,   vi->visual,
-                                      XmNcolormap, cmap,
-                                      XmNdepth,    vi->depth,
-                                      XmNwidth,    800,
-                                      XmNheight,   600,
-                                      NULL);
-
-    XtAddCallback(gl_area, XmNexposeCallback, expose_cb, NULL);
-    XtAddCallback(gl_area, XmNrealizeCallback, realize_cb, NULL);
-
-    /* === Step 7: Attach areas to main window === */
-    XmMainWindowSetAreas(mainwin, menubar, NULL, hscroll, vscroll, gl_area);
-
-    /* === Step 8: Show === */
-    XtRealizeWidget(toplevel);
-    XtAppMainLoop(app);
-
-    return 0;
-}
-#endif
-#ifdef TEST002
+#ifdef TEST002 //X Error of failed request:  BadMatch (invalid parameter attributes)
 #include <Xm/Xm.h>
 #include <Xm/RowColumn.h>
 #include <Xm/MainW.h>
@@ -702,6 +643,126 @@ int main(int argc, char **argv)
 
     XtRealizeWidget(toplevel);
     XtAppMainLoop(app);
+    return 0;
+}
+#endif
+#ifdef TEST001 //X Error of failed request:  BadColor (invalid Colormap parameter)
+#include <Xm/Xm.h>
+#include <Xm/RowColumn.h>
+#include <Xm/MainW.h>
+#include <Xm/PushB.h>
+#include <Xm/DrawingA.h>
+#include <Xm/ScrollBar.h>
+#include <GL/gl.h>
+#include <GL/glx.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* Globals */
+Display      *dpy;
+GLXContext    glx_ctx;
+Window        glx_win;
+XVisualInfo  *vi;
+Widget        gl_area;
+
+void draw_scene()
+{
+    glClearColor(0.1, 0.1, 0.3, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glBegin(GL_TRIANGLES);
+        glColor3f(1, 0, 0);
+        glVertex3f(-0.6, -0.4, 0);
+        glColor3f(0, 1, 0);
+        glVertex3f(0.6, -0.4, 0);
+        glColor3f(0, 0, 1);
+        glVertex3f(0.0, 0.6, 0);
+    glEnd();
+
+    glXSwapBuffers(dpy, glx_win);
+}
+
+void expose_cb(Widget w, XtPointer client_data, XtPointer call_data)
+{
+    draw_scene();
+}
+
+void realize_cb(Widget w, XtPointer client_data, XtPointer call_data)
+{
+    dpy = XtDisplay(w);
+    glx_win = XtWindow(w);
+    glx_ctx = glXCreateContext(dpy, vi, NULL, GL_TRUE);
+    if (!glx_ctx) {
+        fprintf(stderr, "glXCreateContext failed\n");
+        exit(1);
+    }
+    glXMakeCurrent(dpy, glx_win, glx_ctx);
+
+    glEnable(GL_DEPTH_TEST);
+    glViewport(0, 0, 800, 600);
+}
+
+int main(int argc, char **argv)
+{
+    XtAppContext app;
+    Widget toplevel, mainwin, menubar;
+    Widget hscroll, vscroll;
+    Colormap cmap;
+    Arg args[10];
+    int n = 0;
+
+    int attribs[] = { GLX_RGBA, GLX_DEPTH_SIZE, 16, GLX_DOUBLEBUFFER, None };
+    dpy = XOpenDisplay(NULL);
+    if (!dpy) { fprintf(stderr, "Cannot open display\n"); exit(1); }
+
+    int screen = DefaultScreen(dpy);
+    vi = glXChooseVisual(dpy, screen, attribs);
+    if (!vi) { fprintf(stderr, "No suitable visual found\n"); exit(1); }
+
+    cmap = XCreateColormap(dpy, RootWindow(dpy, vi->screen), vi->visual, AllocNone);
+
+    /* Now create the shell with correct visual/colormap */
+    toplevel = XtVaAppInitialize(
+        &app, "MotifGLX", NULL, 0, &argc, argv, NULL,
+        XmNvisual,   vi->visual,
+        XmNcolormap, cmap,
+        XmNdepth,    vi->depth,
+        NULL
+    );
+
+
+    /* === Step 3: Create main window === */
+    mainwin = XmCreateMainWindow(toplevel, "mainwin", NULL, 0);
+    XtManageChild(mainwin);
+
+    /* === Step 4: Menu bar === */
+    menubar = XmCreateMenuBar(mainwin, "menubar", NULL, 0);
+    XtManageChild(menubar);
+
+    /* === Step 5: Scrollbars === */
+    hscroll = XmCreateScrollBar(mainwin, "hscroll", NULL, 0);
+    vscroll = XmCreateScrollBar(mainwin, "vscroll", NULL, 0);
+
+    /* === Step 6: GL DrawingArea with correct visual === */
+    gl_area = XtVaCreateManagedWidget("glArea",
+                                      xmDrawingAreaWidgetClass, mainwin,
+                                      XmNvisual,   vi->visual,
+                                      XmNcolormap, cmap,
+                                      XmNdepth,    vi->depth,
+                                      XmNwidth,    800,
+                                      XmNheight,   600,
+                                      NULL);
+
+    XtAddCallback(gl_area, XmNexposeCallback, expose_cb, NULL);
+    XtAddCallback(gl_area, XmNrealizeCallback, realize_cb, NULL);
+
+    /* === Step 7: Attach areas to main window === */
+    XmMainWindowSetAreas(mainwin, menubar, NULL, hscroll, vscroll, gl_area);
+
+    /* === Step 8: Show === */
+    XtRealizeWidget(toplevel);
+    XtAppMainLoop(app);
+
     return 0;
 }
 #endif
