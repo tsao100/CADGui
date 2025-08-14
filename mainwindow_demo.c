@@ -1,5 +1,457 @@
-#define TEST010
+#define TEST011
 #ifdef TEST01N
+#endif
+#ifdef TEST011
+/* Minimal CAD-like UI using pure GLUT subwindows.
+ * Layout:
+ *  +--------------------------------------------+
+ *  | Toolbar (subwindow)                        |
+ *  +--------------------------------------------+
+ *  | Draw Area (subwindow, OpenGL)              |
+ *  |                                            |
+ *  +--------------------------------------------+
+ *  | Command Input (subwindow)                  |
+ *  +--------------------------------------------+
+ *  | Status Bar (subwindow)                     |
+ *  +--------------------------------------------+
+ *
+ * Requires freeglut or GLUT.
+ */
+#include <GL/glut.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+
+/* --- Layout constants --- */
+static int WIN_W = 1000, WIN_H = 700;
+static const int H_TOOLBAR = 44;
+static const int H_CMD     = 28;
+static const int H_STATUS  = 22;
+
+/* --- Subwindow IDs --- */
+static int win_main = 0;
+static int win_toolbar = 0;
+static int win_draw = 0;
+static int win_cmd = 0;
+static int win_status = 0;
+
+/* --- State --- */
+static char status_text[256] = "Ready";
+static char cmd_text[256]    = "";
+static int  cmd_cursor       = 0;
+
+/* Toolbar buttons */
+typedef struct { int x, y, w, h; const char* label; int id; } Button;
+enum { BTN_NEW=1, BTN_LINE, BTN_SPLINE, BTN_CLEAR };
+static Button toolbar_btns[4];
+
+/* Draw area content: a simple polyline we “collect” with mouse clicks */
+#define MAX_PTS 2048
+static int n_pts = 0;
+static float pts[MAX_PTS][2];  /* normalized device coords (-1..1) */
+
+/* Helper: draw bitmap text (fixed 10px height, approx) */
+static void drawBitmapString(float x, float y, const char *s)
+{
+    glRasterPos2f(x, y);
+    for (const char* p=s; *p; ++p) glutBitmapCharacter(GLUT_BITMAP_8_BY_13, *p);
+}
+
+/* Helper: draw rect outline */
+static void drawRect(int x, int y, int w, int h)
+{
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(x, y);
+    glVertex2f(x+w, y);
+    glVertex2f(x+w, y+h);
+    glVertex2f(x, y+h);
+    glEnd();
+}
+
+/* Helper: fill rect */
+static void fillRect(int x, int y, int w, int h)
+{
+    glBegin(GL_QUADS);
+    glVertex2f(x, y);
+    glVertex2f(x+w, y);
+    glVertex2f(x+w, y+h);
+    glVertex2f(x, y+h);
+    glEnd();
+}
+
+/* Convert window coords (pixels) to NDC [-1,1] in draw subwindow */
+static void toNDC(int px, int py, float *x, float *y)
+{
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+    *x = ( (float)px / (float)w ) * 2.0f - 1.0f;
+    *y = 1.0f - ( (float)py / (float)h ) * 2.0f;
+}
+
+/* ----- Status Bar ----- */
+static void status_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(status_text, sizeof(status_text), fmt, ap);
+    va_end(ap);
+    if (win_status) {
+        glutSetWindow(win_status);
+        glutPostRedisplay();
+    }
+}
+
+/* ----- Toolbar ----- */
+static void toolbar_init_buttons(void)
+{
+    int x = 8, y = 6, w = 90, h = H_TOOLBAR - 12, gap = 8;
+    toolbar_btns[0] = (Button){x, y, w, h, "New",     BTN_NEW};
+    x += w+gap;
+    toolbar_btns[1] = (Button){x, y, w, h, "Line",    BTN_LINE};
+    x += w+gap;
+    toolbar_btns[2] = (Button){x, y, w, h, "Spline",  BTN_SPLINE};
+    x += w+gap;
+    toolbar_btns[3] = (Button){x, y, w, h, "Clear",   BTN_CLEAR};
+}
+
+static void toolbar_display(void)
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, glutGet(GLUT_WINDOW_WIDTH),
+            glutGet(GLUT_WINDOW_HEIGHT), 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    /* background */
+    glColor3f(0.92f, 0.92f, 0.95f);
+    fillRect(0,0, glutGet(GLUT_WINDOW_WIDTH), glutGet(GLUT_WINDOW_HEIGHT));
+
+    /* buttons */
+    for (int i=0;i<4;i++){
+        glColor3f(0,0,0);
+        drawRect(toolbar_btns[i].x, toolbar_btns[i].y, toolbar_btns[i].w, toolbar_btns[i].h);
+        /* label */
+        glColor3f(0,0,0);
+        float tx = toolbar_btns[i].x + 10;
+        float ty = toolbar_btns[i].y + toolbar_btns[i].h/2 + 4;
+        drawBitmapString(tx, ty, toolbar_btns[i].label);
+    }
+    glutSwapBuffers();
+}
+
+static void toolbar_mouse(int button, int state, int x, int y)
+{
+    if (state != GLUT_DOWN) return;
+    for (int i=0;i<4;i++){
+        Button *b = &toolbar_btns[i];
+        if (x>=b->x && x<=b->x+b->w && y>=b->y && y<=b->y+b->h) {
+            switch (b->id) {
+                case BTN_NEW:
+                    n_pts = 0;
+                    status_printf("New: start sketching (click in Draw Area).");
+                    break;
+                case BTN_LINE:
+                    status_printf("Line mode (click to add points).");
+                    break;
+                case BTN_SPLINE:
+                    status_printf("Spline mode (demo draws simple bezier over points).");
+                    break;
+                case BTN_CLEAR:
+                    n_pts = 0;
+                    status_printf("Cleared.");
+                    break;
+            }
+            glutPostRedisplay();
+            return;
+        }
+    }
+}
+
+static void toolbar_reshape(int w, int h)
+{
+    glViewport(0,0,w,h);
+}
+
+/* ----- Draw Area ----- */
+static void draw_display(void)
+{
+    glViewport(0,0, glutGet(GLUT_WINDOW_WIDTH), glutGet(GLUT_WINDOW_HEIGHT));
+    glClearColor(0.12f,0.12f,0.14f,1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    /* Axes */
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(-1,1,-1,1,-1,1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glLineWidth(1.0f);
+    glColor3f(0.25f,0.25f,0.3f);
+    glBegin(GL_LINES);
+      glVertex2f(-1,0); glVertex2f(1,0);
+      glVertex2f(0,-1); glVertex2f(0,1);
+    glEnd();
+
+    /* Points */
+    glPointSize(6.f);
+    glColor3f(1,0.6f,0.1f);
+    glBegin(GL_POINTS);
+      for (int i=0;i<n_pts;i++) glVertex2f(pts[i][0], pts[i][1]);
+    glEnd();
+
+    /* Polyline */
+    if (n_pts >= 2) {
+      glColor3f(0.0f, 0.8f, 1.0f);
+      glBegin(GL_LINE_STRIP);
+        for (int i=0;i<n_pts;i++) glVertex2f(pts[i][0], pts[i][1]);
+      glEnd();
+    }
+
+    /* Very simple "spline": sample quadratic Bezier over first 3 points if present */
+    if (n_pts >= 3) {
+        float p0x=pts[0][0], p0y=pts[0][1];
+        float p1x=pts[1][0], p1y=pts[1][1];
+        float p2x=pts[2][0], p2y=pts[2][1];
+        glColor3f(0.2f, 1.0f, 0.2f);
+        glBegin(GL_LINE_STRIP);
+        for (int i=0;i<=100;i++){
+            float t = i/100.0f;
+            float u = 1.0f - t;
+            float x = u*u*p0x + 2*u*t*p1x + t*t*p2x;
+            float y = u*u*p0y + 2*u*t*p1y + t*t*p2y;
+            glVertex2f(x,y);
+        }
+        glEnd();
+    }
+
+    glutSwapBuffers();
+}
+
+static void draw_mouse(int button, int state, int x, int y)
+{
+    if (button==GLUT_LEFT_BUTTON && state==GLUT_DOWN) {
+        if (n_pts < MAX_PTS) {
+            float nx, ny;
+            toNDC(x, y, &nx, &ny);
+            pts[n_pts][0] = nx;
+            pts[n_pts][1] = ny;
+            n_pts++;
+            status_printf("Point %d: (%.3f, %.3f)", n_pts, nx, ny);
+            glutPostRedisplay();
+        } else {
+            status_printf("Point buffer full.");
+        }
+    }
+}
+
+static void draw_reshape(int w, int h)
+{
+    glViewport(0,0,w,h);
+    glutPostRedisplay();
+}
+
+/* ----- Command Input ----- */
+static void cmd_display(void)
+{
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, w, h, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glColor3f(0.95f,0.95f,1.0f);
+    fillRect(0,0,w,h);
+    glColor3f(0,0,0);
+    drawRect(0,0,w,h);
+
+    glColor3f(0,0,0);
+    drawBitmapString(8, h/2 + 4, cmd_text);
+
+    /* cursor (simple) */
+    int cursor_px = 8 + 8*cmd_cursor;
+    glBegin(GL_LINES);
+      glVertex2f(cursor_px, 4);
+      glVertex2f(cursor_px, h-4);
+    glEnd();
+
+    glutSwapBuffers();
+}
+
+static void cmd_key(unsigned char key, int x, int y)
+{
+    if (key == 13) { /* Enter */
+        if (strcmp(cmd_text,"CLEAR")==0 || strcmp(cmd_text,"clear")==0) {
+            n_pts = 0;
+            status_printf("CLEARED via command.");
+        } else if (strncmp(cmd_text,"NEW",3)==0 || strncmp(cmd_text,"new",3)==0) {
+            n_pts = 0;
+            status_printf("NEW sketch.");
+        } else {
+            status_printf("CMD: %s", cmd_text);
+        }
+        cmd_text[0] = '\0';
+        cmd_cursor = 0;
+        glutPostRedisplay();
+        if (win_draw) { glutSetWindow(win_draw); glutPostRedisplay(); }
+        return;
+    } else if (key == 8 || key == 127) { /* backspace */
+        if (cmd_cursor > 0) {
+            cmd_cursor--;
+            cmd_text[cmd_cursor] = '\0';
+        }
+    } else if (key >= 32 && key < 127) {
+        if (cmd_cursor < (int)sizeof(cmd_text)-1) {
+            cmd_text[cmd_cursor++] = key;
+            cmd_text[cmd_cursor] = '\0';
+        }
+    }
+    glutPostRedisplay();
+}
+
+static void cmd_reshape(int w, int h)
+{
+    glViewport(0,0,w,h);
+}
+
+/* ----- Status Bar ----- */
+static void status_display(void)
+{
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, w, h, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glColor3f(0.90f,0.92f,0.95f);
+    fillRect(0,0,w,h);
+    glColor3f(0,0,0);
+    drawRect(0,0,w,h);
+
+    glColor3f(0.1f,0.1f,0.1f);
+    drawBitmapString(8, h/2 + 4, status_text);
+
+    glutSwapBuffers();
+}
+
+static void status_reshape(int w, int h)
+{
+    glViewport(0,0,w,h);
+}
+
+/* ----- Menu (right-click) ----- */
+static void menu_select(int id)
+{
+    switch (id) {
+        case 1: n_pts = 0; status_printf("New"); break;
+        case 2: status_printf("Line tool"); break;
+        case 3: status_printf("Spline tool"); break;
+        case 4: exit(0); break;
+    }
+}
+
+static void create_menu(void)
+{
+    int m = glutCreateMenu(menu_select);
+    glutAddMenuEntry("New",   1);
+    glutAddMenuEntry("Line",  2);
+    glutAddMenuEntry("Spline",3);
+    glutAddMenuEntry("Quit",  4);
+    /* Attach to the draw area window */
+    glutSetWindow(win_draw);
+    glutAttachMenu(GLUT_RIGHT_BUTTON);
+}
+
+/* ----- Window layout management ----- */
+static void layout_subwindows(void)
+{
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+
+    int y_toolbar = 0;
+    int y_draw    = y_toolbar + H_TOOLBAR;
+    int h_draw    = h - H_TOOLBAR - H_CMD - H_STATUS;
+    int y_cmd     = y_draw + h_draw;
+    int y_status  = y_cmd + H_CMD;
+
+    glutSetWindow(win_toolbar);
+    glutPositionWindow(0, y_toolbar);
+    glutReshapeWindow(w, H_TOOLBAR);
+
+    glutSetWindow(win_draw);
+    glutPositionWindow(0, y_draw);
+    glutReshapeWindow(w, h_draw);
+
+    glutSetWindow(win_cmd);
+    glutPositionWindow(0, y_cmd);
+    glutReshapeWindow(w, H_CMD);
+
+    glutSetWindow(win_status);
+    glutPositionWindow(0, y_status);
+    glutReshapeWindow(w, H_STATUS);
+}
+
+/* main window reshape -> update layout of subwindows */
+static void main_reshape(int w, int h)
+{
+    WIN_W = w; WIN_H = h;
+    layout_subwindows();
+}
+
+/* main display is unused (we draw in subwindows) */
+static void main_display(void) {}
+
+/* ----- Entry point ----- */
+int main(int argc, char **argv)
+{
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+
+    glutInitWindowSize(WIN_W, WIN_H);
+    win_main = glutCreateWindow("GLUT CAD UI (Toolbar/Draw/Command/Status)");
+
+    /* main window callbacks */
+    glutDisplayFunc(main_display);
+    glutReshapeFunc(main_reshape);
+
+    /* create subwindows */
+    win_toolbar = glutCreateSubWindow(win_main, 0, 0, WIN_W, H_TOOLBAR);
+    glutDisplayFunc(toolbar_display);
+    glutReshapeFunc(toolbar_reshape);
+    glutMouseFunc(toolbar_mouse);
+
+    win_draw = glutCreateSubWindow(win_main, 0, H_TOOLBAR,
+                                   WIN_W, WIN_H - H_TOOLBAR - H_CMD - H_STATUS);
+    glutDisplayFunc(draw_display);
+    glutReshapeFunc(draw_reshape);
+    glutMouseFunc(draw_mouse);
+
+    win_cmd = glutCreateSubWindow(win_main, 0, WIN_H - H_CMD - H_STATUS, WIN_W, H_CMD);
+    glutDisplayFunc(cmd_display);
+    glutReshapeFunc(cmd_reshape);
+    glutKeyboardFunc(cmd_key);
+
+    win_status = glutCreateSubWindow(win_main, 0, WIN_H - H_STATUS, WIN_W, H_STATUS);
+    glutDisplayFunc(status_display);
+    glutReshapeFunc(status_reshape);
+
+    toolbar_init_buttons();
+    create_menu();
+    status_printf("Ready");
+
+    glutMainLoop(); /* blocks */
+    return 0;
+}
+
 #endif
 #ifdef TEST010
 //gcc -g mainwindow_demo.c -o mainwindow_demo -lXm -lXt -lX11 -lGL -lGLU -lglut
