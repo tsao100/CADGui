@@ -1,5 +1,166 @@
-#define TEST009
-#ifdef TEST00N
+#define TEST010
+#ifdef TEST01N
+#endif
+#ifdef TEST010
+//gcc -g mainwindow_demo.c -o mainwindow_demo -lXm -lXt -lX11 -lGL -lGLU -lglut
+#include <Xm/Xm.h>
+#include <Xm/MainW.h>
+#include <Xm/RowColumn.h>
+#include <Xm/CascadeB.h>   /* Needed for xmCascadeButtonWidgetClass */
+#include <Xm/PushB.h>      /* Needed for xmPushButtonWidgetClass */
+#include <Xm/Form.h>
+#include <Xm/Label.h>
+#include <Xm/TextF.h>
+#include <GL/glx.h>          /* for glXGetCurrentDrawable */
+#include <GL/freeglut.h>     /* for glutMainLoopEvent etc. */
+#include <GL/glut.h>
+#include <X11/Xlib.h>
+#include <stdio.h>
+
+typedef struct {
+    Widget top, mainWin, menuBar, toolBar, drawForm, cmdInput, statusBar;
+} AppWidgets;
+
+static AppWidgets app;
+
+/* GLUT globals */
+static int glutWinID = 0;
+static Display *dpy;
+static Window glutXWin;
+
+/* Draw a triangle */
+void glut_display(void) {
+    glClearColor(0.1, 0.1, 0.3, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glBegin(GL_TRIANGLES);
+        glColor3f(1, 0, 0); glVertex2f(-0.6, -0.4);
+        glColor3f(0, 1, 0); glVertex2f( 0.6, -0.4);
+        glColor3f(0, 0, 1); glVertex2f( 0.0,  0.6);
+    glEnd();
+
+    glutSwapBuffers();
+}
+
+void glut_idle(void) {
+    glutPostRedisplay();
+}
+
+/* Sync GLUT window with Motif form */
+void sync_glut_position() {
+    if (!glutXWin || !app.drawForm) return;
+
+    Window root;
+    int x, y;
+    unsigned int width, height, border, depth;
+    XWindowAttributes attr;
+
+    Window formWin = XtWindow(app.drawForm);
+
+    /* Get size */
+    XGetWindowAttributes(dpy, formWin, &attr);
+    width = attr.width;
+    height = attr.height;
+
+    /* Translate position to root coords */
+    XTranslateCoordinates(dpy, formWin, RootWindow(dpy, DefaultScreen(dpy)),
+                          0, 0, &x, &y, &root);
+
+    /* Move GLUT window */
+    XMoveResizeWindow(dpy, glutXWin, x, y, width, height);
+}
+
+/* Quit callback */
+void quit_cb(Widget w, XtPointer c, XtPointer call) {
+    if (glutWinID) glutDestroyWindow(glutWinID);
+    exit(0);
+}
+
+/* Menu */
+Widget create_menu_bar(Widget parent) {
+    Widget menuBar = XmCreateMenuBar(parent, "menuBar", NULL, 0);
+    Widget fileMenu = XmCreatePulldownMenu(menuBar, "fileMenu", NULL, 0);
+    Widget fileCascade = XtVaCreateManagedWidget(
+        "File", xmCascadeButtonWidgetClass, menuBar,
+        XmNsubMenuId, fileMenu, NULL);
+
+    Widget quitBtn = XtVaCreateManagedWidget(
+        "Quit", xmPushButtonWidgetClass, fileMenu, NULL);
+    XtAddCallback(quitBtn, XmNactivateCallback, quit_cb, NULL);
+
+    return menuBar;
+}
+
+/* Toolbar */
+Widget create_tool_bar(Widget parent) {
+    Widget toolBar = XmCreateRowColumn(parent, "toolBar", NULL, 0);
+    XtVaSetValues(toolBar, XmNorientation, XmHORIZONTAL, NULL);
+    XtVaCreateManagedWidget("Tool1", xmPushButtonWidgetClass, toolBar, NULL);
+    XtVaCreateManagedWidget("Tool2", xmPushButtonWidgetClass, toolBar, NULL);
+    return toolBar;
+}
+
+Widget create_status_bar(Widget parent) {
+    return XtVaCreateManagedWidget("Status: Ready", xmLabelWidgetClass, parent, NULL);
+}
+
+Widget create_cmd_input(Widget parent) {
+    return XtVaCreateManagedWidget("cmdInput", xmTextFieldWidgetClass, parent, NULL);
+}
+
+int main(int argc, char **argv) {
+    XtAppContext appCtx;
+
+    /* Create Motif UI */
+    app.top = XtVaAppInitialize(&appCtx, "MotifGLUTAlign", NULL, 0, &argc, argv, NULL, NULL);
+    app.mainWin = XmCreateMainWindow(app.top, "mainWin", NULL, 0);
+    XtManageChild(app.mainWin);
+
+    app.menuBar = create_menu_bar(app.mainWin);
+    XtManageChild(app.menuBar);
+
+    app.toolBar = create_tool_bar(app.mainWin);
+    XtManageChild(app.toolBar);
+
+    /* Form for OpenGL drawing */
+    app.drawForm = XtVaCreateManagedWidget("drawForm", xmFormWidgetClass, app.mainWin, NULL);
+
+    app.cmdInput = create_cmd_input(app.mainWin);
+    XtManageChild(app.cmdInput);
+
+    app.statusBar = create_status_bar(app.mainWin);
+    XtManageChild(app.statusBar);
+
+    XmMainWindowSetAreas(app.mainWin, app.menuBar, app.toolBar, NULL, app.statusBar, app.drawForm);
+
+    XtRealizeWidget(app.top);
+
+    /* ---- GLUT window ---- */
+    int gArgc = 1;
+    char *gArgv[] = {"glut", NULL};
+    glutInit(&gArgc, gArgv);
+    glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH);
+    glutInitWindowSize(400, 300);
+    glutWinID = glutCreateWindow("GLUT Area");
+    glutDisplayFunc(glut_display);
+    glutIdleFunc(glut_idle);
+
+    /* Get X window of GLUT */
+    glutXWin = glXGetCurrentDrawable(); // works in freeglut
+    dpy = XOpenDisplay(NULL);
+
+    /* ---- Combined loop ---- */
+    while (1) {
+        while (XtAppPending(appCtx)) {
+            XtAppProcessEvent(appCtx, XtIMAll);
+        }
+        sync_glut_position();
+        glutMainLoopEvent();
+    }
+
+    return 0;
+}
+
 #endif
 #ifdef TEST009 //X Error of failed request:  BadMatch (invalid parameter attributes)
 #include <Xm/Xm.h>

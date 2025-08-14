@@ -5,6 +5,7 @@
         "mainw.h": "c",
         "rowcolumn.h": "c",
         "scrollbar.h": "c",
-        "xm.h": "c"
+        "xm.h": "c",
+        "stdio.h": "c"
     }
 }
