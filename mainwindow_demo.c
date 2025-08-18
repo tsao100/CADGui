@@ -1,6 +1,91 @@
 #define TEST011
 #ifdef TEST01N
 #endif
+#ifdef TEST012 //freeglut (./mainwindow_demo): ERROR:  No display callback registered for window 1
+//gcc -g mainwindow_demo.c -o mainwindow_demo -lGL -lGLU -lglut
+#include <GL/glut.h>
+#include <GL/freeglut.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* Window IDs */
+int win_main, win_menu, win_draw;
+
+/* Dimensions */
+int WIN_W = 800, WIN_H = 600;
+int H_MENU = 30;  // simulated menubar height
+
+/* Menu selection handler */
+void menu_select(int id) {
+    switch(id) {
+        case 1: printf("File->New\n"); break;
+        case 2: printf("File->Open\n"); break;
+        case 3: printf("File->Exit\n"); exit(0); break;
+    }
+}
+
+/* Simulated menubar */
+void menubar_display() {
+    glClearColor(0.8,0.8,0.8,1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColor3f(0,0,0);
+    glRasterPos2i(10, 20);
+    glutBitmapString(GLUT_BITMAP_HELVETICA_18, (const unsigned char *)"File");
+    glutSwapBuffers();
+}
+
+void draw_display() {
+    glClearColor(0.1,0.1,0.3,1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBegin(GL_TRIANGLES);
+        glColor3f(1,0,0); glVertex2f(-0.5,-0.5);
+        glColor3f(0,1,0); glVertex2f(0.5,-0.5);
+        glColor3f(0,0,1); glVertex2f(0.0,0.5);
+    glEnd();
+    glutSwapBuffers();
+}
+
+void display_cb(void) {
+    glClearColor(0.9, 0.9, 0.9, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Example drawing
+    glColor3f(1, 0, 0);
+    glBegin(GL_TRIANGLES);
+        glVertex2f(-0.5f, -0.5f);
+        glVertex2f(0.5f, -0.5f);
+        glVertex2f(0.0f, 0.5f);
+    glEnd();
+
+    glutSwapBuffers();
+}
+
+
+int main(int argc, char** argv) {
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
+    glutInitWindowSize(WIN_W, WIN_H);
+    win_main = glutCreateWindow("GLUT Simulated Menubar Example");
+
+    /* Create simulated menubar as a subwindow */
+    win_menu = glutCreateSubWindow(win_main, 0, 0, WIN_W, H_MENU);
+    glutDisplayFunc(menubar_display);
+    int menu = glutCreateMenu(menu_select);
+    glutAddMenuEntry("New", 1);
+    glutAddMenuEntry("Open", 2);
+    glutAddMenuEntry("Exit", 3);
+    glutAttachMenu(GLUT_LEFT_BUTTON); // left-click to open menubar menu
+
+    /* Create drawing area subwindow */
+    win_draw = glutCreateSubWindow(win_main, 0, H_MENU, WIN_W, WIN_H - H_MENU);
+    //glutDisplayFunc(draw_display);
+    glutDisplayFunc(display_cb);  // ✅ REQUIRED
+
+    glutMainLoopEvent();
+    return 0;
+}
+
+#endif
 #ifdef TEST011
 /* Minimal CAD-like UI using pure GLUT subwindows.
  * Layout:
