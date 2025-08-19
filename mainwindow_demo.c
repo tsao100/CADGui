@@ -1,5 +1,409 @@
-#define TEST011
+#define TEST013
 #ifdef TEST01N
+#endif
+#ifdef TEST013
+// glx_xlib_ui.c
+// Minimal Xlib + GLX UI with menu bar, toolbar, GLX draw area, cmd input bar, status bar,
+// plus a tiny message bus routing events among components.
+//
+// Build (Linux / *BSD):
+//   gcc glx_xlib_ui.c -o glx_xlib_ui -lX11 -lGL
+//
+// Run:
+//   ./glx_xlib_ui
+//
+// What it does:
+// - Lays out 5 child windows in a parent X window
+// - Attaches a GLX context to the draw area child
+// - Sends/receives messages between components:
+//     * Typing in the cmd bar + Enter sends a CMD_EXEC -> draw area (changes color)
+//     * Clicking a toolbar button sends TOOL_CLICK -> status bar (updates text)
+//     * Clicking a menu item sends MENU_ACTION -> status bar (updates text)
+//
+// Notes:
+// - This is intentionally compact; a real app would split files and add error checks.
+// - Uses only Xlib + GLX (no Xt, no Motif, no Xft). Text via XDrawString.
+// - All children share the same visual/colormap selected for GLX for simplicity.
+
+#define _POSIX_C_SOURCE 200809L
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/keysym.h>
+#include <GL/gl.h>
+#include <GL/glx.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <time.h>
+
+#define APP_MIN_W 640
+#define APP_MIN_H 400
+
+// Layout (pixels)
+enum {
+    MENU_H   = 24,
+    TOOL_H   = 32,
+    INPUT_H  = 28,
+    STATUS_H = 20,
+    PAD      = 0
+};
+
+// Components
+typedef enum {
+    COMP_MENU,
+    COMP_TOOLBAR,
+    COMP_DRAW,
+    COMP_CMD,
+    COMP_STATUS,
+    COMP_COUNT
+} ComponentID;
+
+// Message types
+typedef enum {
+    MSG_NONE = 0,
+    MSG_CMD_EXEC,      // payload: command string
+    MSG_TOOL_CLICK,    // payload: "Tool<n>"
+    MSG_MENU_ACTION,   // payload: "File|Edit|Help:<item>"
+    MSG_STATUS_SET,    // payload: status text
+    MSG_DRAW_SET_COLOR // payload: "r g b"
+} MessageType;
+
+typedef struct {
+    MessageType type;
+    ComponentID from;
+    ComponentID to;        // COMP_COUNT means broadcast
+    char payload[256];
+} Message;
+
+// Very small single-producer/single-consumer queue for demo
+#define MSGQ_MAX 64
+typedef struct {
+    Message q[MSGQ_MAX];
+    int head, tail, count;
+} MsgQueue;
+
+static void msgq_init(MsgQueue *mq){ mq->head=mq->tail=mq->count=0; }
+static bool msgq_push(MsgQueue *mq, Message m){
+    if(mq->count==MSGQ_MAX) return false;
+    mq->q[mq->tail]=m; mq->tail=(mq->tail+1)%MSGQ_MAX; mq->count++; return true;
+}
+static bool msgq_pop(MsgQueue *mq, Message *out){
+    if(mq->count==0) return false;
+    *out = mq->q[mq->head]; mq->head=(mq->head+1)%MSGQ_MAX; mq->count--; return true;
+}
+
+// Global app state
+typedef struct {
+    Display *dpy;
+    int screen;
+    Window root;
+    XVisualInfo *vi;
+    Colormap cmap;
+    GLXContext glctx;
+
+    Window main;
+    Window comps[COMP_COUNT]; // child windows
+
+    GC gc;
+
+    // UI state
+    int win_w, win_h;
+    char status_text[256];
+    char cmd_buffer[256];
+    int  cmd_len;
+
+    // Draw area state
+    float clear_r, clear_g, clear_b;
+
+    // Message bus
+    MsgQueue bus;
+} App;
+
+static void fatal(const char* msg){ fprintf(stderr, "FATAL: %s\n", msg); exit(1); }
+
+static void send_msg(App* app, ComponentID from, ComponentID to, MessageType t, const char* payload){
+    Message m = { .type=t, .from=from, .to=to };
+    if(payload) strncpy(m.payload, payload, sizeof(m.payload)-1);
+    if(!msgq_push(&app->bus, m)){
+        fprintf(stderr, "Message queue full, dropping message\n");
+    }
+}
+
+static void set_status(App* app, const char* txt){
+    strncpy(app->status_text, txt, sizeof(app->status_text)-1);
+    XClearWindow(app->dpy, app->comps[COMP_STATUS]);
+    XDrawString(app->dpy, app->comps[COMP_STATUS], app->gc, 6, STATUS_H-6, app->status_text, (int)strlen(app->status_text));
+}
+
+static void layout_children(App* app){
+    int w = app->win_w, h = app->win_h;
+    if(w<APP_MIN_W) w=APP_MIN_W;
+    if(h<APP_MIN_H) h=APP_MIN_H;
+
+    int y = 0;
+    XMoveResizeWindow(app->dpy, app->comps[COMP_MENU],    0, y, w, MENU_H); y += MENU_H + PAD;
+    XMoveResizeWindow(app->dpy, app->comps[COMP_TOOLBAR], 0, y, w, TOOL_H); y += TOOL_H + PAD;
+
+    int draw_h = h - (MENU_H+TOOL_H+INPUT_H+STATUS_H + 3*PAD);
+    if(draw_h<50) draw_h=50;
+    XMoveResizeWindow(app->dpy, app->comps[COMP_DRAW],    0, y, w, draw_h); y += draw_h + PAD;
+
+    XMoveResizeWindow(app->dpy, app->comps[COMP_CMD],     0, y, w, INPUT_H); y += INPUT_H + PAD;
+    XMoveResizeWindow(app->dpy, app->comps[COMP_STATUS],  0, y, w, STATUS_H);
+}
+
+static void draw_menu(App* app){
+    // Fake static menu: [File] [Edit] [Help]
+    XClearWindow(app->dpy, app->comps[COMP_MENU]);
+    XDrawString(app->dpy, app->comps[COMP_MENU], app->gc, 10, MENU_H-8, "File  Edit  Help", 16);
+}
+
+static void draw_toolbar(App* app){
+    // Fake buttons: [Tool1] [Tool2] [Tool3]
+    XClearWindow(app->dpy, app->comps[COMP_TOOLBAR]);
+    const char* labels[] = {"[Tool1]", "[Tool2]", "[Tool3]"};
+    int x = 8;
+    for(int i=0;i<3;i++){
+        XDrawString(app->dpy, app->comps[COMP_TOOLBAR], app->gc, x, TOOL_H-10, labels[i], (int)strlen(labels[i]));
+        x += 80;
+    }
+}
+
+static void draw_cmdbar(App* app){
+    XClearWindow(app->dpy, app->comps[COMP_CMD]);
+    char prompt[300];
+    snprintf(prompt, sizeof(prompt), "> %s", app->cmd_buffer);
+    XDrawString(app->dpy, app->comps[COMP_CMD], app->gc, 6, INPUT_H-8, prompt, (int)strlen(prompt));
+}
+
+static void glx_redraw(App* app){
+    glClearColor(app->clear_r, app->clear_g, app->clear_b, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+
+    // Draw a simple triangle for proof-of-life
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glBegin(GL_TRIANGLES);
+        glColor3f(1,0,0); glVertex2f(-0.6f, -0.6f);
+        glColor3f(0,1,0); glVertex2f( 0.6f, -0.6f);
+        glColor3f(0,0,1); glVertex2f( 0.0f,  0.6f);
+    glEnd();
+
+    glXSwapBuffers(app->dpy, app->comps[COMP_DRAW]);
+}
+
+static void handle_menu_click(App* app, int x, int y){
+    // Super crude hit test: 3 zones
+    const char* which = "Unknown";
+    if(x<60) which="File:Open";
+    else if(x<120) which="Edit:Copy";
+    else which="Help:About";
+    send_msg(app, COMP_MENU, COMP_STATUS, MSG_MENU_ACTION, which);
+}
+
+static void handle_toolbar_click(App* app, int x, int y){
+    int idx = x/80;
+    if(idx<0) idx=0; if(idx>2) idx=2;
+    char buf[64]; snprintf(buf, sizeof(buf), "Tool%d", idx+1);
+    send_msg(app, COMP_TOOLBAR, COMP_STATUS, MSG_TOOL_CLICK, buf);
+}
+
+static void handle_cmd_input(App* app, XKeyEvent* kev){
+    KeySym ks; char txt[32]; int n = XLookupString(kev, txt, sizeof(txt)-1, &ks, NULL);
+    if(n>0){
+        txt[n] = '\0';
+        if(txt[0] == '\r' || txt[0] == '\n'){
+            // Execute command -> draw area
+            send_msg(app, COMP_CMD, COMP_DRAW, MSG_CMD_EXEC, app->cmd_buffer);
+            app->cmd_len = 0; app->cmd_buffer[0] = '\0';
+            draw_cmdbar(app);
+            return;
+        }else if((unsigned char)txt[0] >= 32){
+            if(app->cmd_len < (int)sizeof(app->cmd_buffer)-1){
+                app->cmd_buffer[app->cmd_len++] = txt[0];
+                app->cmd_buffer[app->cmd_len] = '\0';
+            }
+        }
+    }else{
+        if(ks == XK_BackSpace && app->cmd_len>0){
+            app->cmd_len--; app->cmd_buffer[app->cmd_len]='\0';
+        }
+    }
+    draw_cmdbar(app);
+}
+
+static void process_message(App* app, const Message* m){
+    // Simple routing per recipient
+    if(m->to != COMP_COUNT){
+        // direct
+        switch(m->to){
+            case COMP_STATUS:
+                if(m->type==MSG_TOOL_CLICK){
+                    char out[512]; snprintf(out, sizeof(out), "Toolbar: %s clicked", m->payload);
+                    set_status(app, out);
+                }else if(m->type==MSG_MENU_ACTION){
+                    char out[512]; snprintf(out, sizeof(out), "Menu: %s", m->payload);
+                    set_status(app, out);
+                }else if(m->type==MSG_STATUS_SET){
+                    set_status(app, m->payload);
+                }
+                break;
+            case COMP_DRAW:
+                if(m->type==MSG_CMD_EXEC){
+                    // Parse command: "color r g b" or "status <text>"
+                    if(strncmp(m->payload, "color", 5)==0){
+                        float r=0, g=0, b=0;
+                        if(sscanf(m->payload+5, "%f %f %f", &r,&g,&b)==3){
+                            if(r<0)r=0; if(r>1)r=1;
+                            if(g<0)g=0; if(g>1)g=1;
+                            if(b<0)b=0; if(b>1)b=1;
+                            app->clear_r=r; app->clear_g=g; app->clear_b=b;
+                            glx_redraw(app);
+                            char s[128]; snprintf(s, sizeof(s), "Set color to %.2f %.2f %.2f", r,g,b);
+                            send_msg(app, COMP_DRAW, COMP_STATUS, MSG_STATUS_SET, s);
+                        }else{
+                            send_msg(app, COMP_DRAW, COMP_STATUS, MSG_STATUS_SET, "Usage: color r g b (0..1)");
+                        }
+                    }else if(strncmp(m->payload, "status ", 7)==0){
+                        send_msg(app, COMP_DRAW, COMP_STATUS, MSG_STATUS_SET, m->payload+7);
+                    }else{
+                        send_msg(app, COMP_DRAW, COMP_STATUS, MSG_STATUS_SET, "Unknown command. Try: color r g b");
+                    }
+                }else if(m->type==MSG_DRAW_SET_COLOR){
+                    float r,g,b;
+                    if(sscanf(m->payload, "%f %f %f", &r,&g,&b)==3){
+                        app->clear_r=r; app->clear_g=g; app->clear_b=b;
+                        glx_redraw(app);
+                    }
+                }
+                break;
+            default: break;
+        }
+    }else{
+        // broadcast (unused in this demo)
+    }
+}
+
+int main(void){
+    App app = {0};
+    app.dpy = XOpenDisplay(NULL);
+    if(!app.dpy) fatal("Cannot open display");
+    app.screen = DefaultScreen(app.dpy);
+    app.root = RootWindow(app.dpy, app.screen);
+
+    // Choose a GLX visual
+    int attr[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_DEPTH_SIZE, 24, None };
+    app.vi = glXChooseVisual(app.dpy, app.screen, attr);
+    if(!app.vi) fatal("No appropriate GLX visual");
+    app.cmap = XCreateColormap(app.dpy, app.root, app.vi->visual, AllocNone);
+
+    XSetWindowAttributes swa = {0};
+    swa.colormap = app.cmap;
+    swa.event_mask = ExposureMask | KeyPressMask | StructureNotifyMask;
+    app.main = XCreateWindow(app.dpy, app.root,
+                             100, 100, APP_MIN_W, APP_MIN_H, 0,
+                             app.vi->depth, InputOutput, app.vi->visual,
+                             CWColormap | CWEventMask, &swa);
+    XStoreName(app.dpy, app.main, "GLX + Xlib UI Demo");
+    Atom wm_delete = XInternAtom(app.dpy, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(app.dpy, app.main, &wm_delete, 1);
+
+    // Create child windows (all same visual/colormap)
+    unsigned long child_mask = CWColormap | CWEventMask;
+    XSetWindowAttributes cwa = {0};
+    cwa.colormap = app.cmap;
+    cwa.event_mask = ExposureMask | ButtonPressMask | KeyPressMask;
+
+    for(int i=0;i<COMP_COUNT;i++){
+        app.comps[i] = XCreateWindow(app.dpy, app.main, 0,0, 100,100, 0,
+                                     app.vi->depth, InputOutput, app.vi->visual,
+                                     child_mask, &cwa);
+        XMapWindow(app.dpy, app.comps[i]);
+    }
+    XMapWindow(app.dpy, app.main);
+
+    // Create GLX context for draw area
+    app.glctx = glXCreateContext(app.dpy, app.vi, NULL, True);
+    if(!app.glctx) fatal("Failed to create GLX context");
+    glXMakeCurrent(app.dpy, app.comps[COMP_DRAW], app.glctx);
+
+    // GC for text rendering
+    XGCValues gcv = {0};
+    app.gc = XCreateGC(app.dpy, app.main, 0, &gcv);
+
+    // Initial state
+    app.win_w = APP_MIN_W; app.win_h = APP_MIN_H;
+    app.clear_r = 0.1f; app.clear_g = 0.1f; app.clear_b = 0.12f;
+    app.cmd_len = 0; app.cmd_buffer[0]='\0';
+    snprintf(app.status_text, sizeof(app.status_text), "Ready. Try: color 0.2 0.5 0.8");
+    msgq_init(&app.bus);
+
+    layout_children(&app);
+    draw_menu(&app);
+    draw_toolbar(&app);
+    draw_cmdbar(&app);
+    set_status(&app, app.status_text);
+    glx_redraw(&app);
+
+    // Event loop
+    for(;;){
+        while(XPending(app.dpy)){
+            XEvent ev; XNextEvent(app.dpy, &ev);
+            if(ev.xany.window == app.main){
+                if(ev.type == ConfigureNotify){
+                    app.win_w = ev.xconfigure.width;
+                    app.win_h = ev.xconfigure.height;
+                    layout_children(&app);
+                }else if(ev.type == ClientMessage){
+                    if((Atom)ev.xclient.data.l[0] == (Atom)wm_delete){
+                        goto cleanup;
+                    }
+                }
+            }else{
+                // Child windows
+                if(ev.type == Expose){
+                    if(ev.xany.window == app.comps[COMP_MENU]) draw_menu(&app);
+                    else if(ev.xany.window == app.comps[COMP_TOOLBAR]) draw_toolbar(&app);
+                    else if(ev.xany.window == app.comps[COMP_CMD]) draw_cmdbar(&app);
+                    else if(ev.xany.window == app.comps[COMP_STATUS]) set_status(&app, app.status_text);
+                    else if(ev.xany.window == app.comps[COMP_DRAW]) { glXMakeCurrent(app.dpy, app.comps[COMP_DRAW], app.glctx); glx_redraw(&app); }
+                }else if(ev.type == ButtonPress){
+                    if(ev.xany.window == app.comps[COMP_MENU]){
+                        handle_menu_click(&app, ev.xbutton.x, ev.xbutton.y);
+                    }else if(ev.xany.window == app.comps[COMP_TOOLBAR]){
+                        handle_toolbar_click(&app, ev.xbutton.x, ev.xbutton.y);
+                    }
+                }else if(ev.type == KeyPress){
+                    if(ev.xany.window == app.comps[COMP_CMD]){
+                        handle_cmd_input(&app, &ev.xkey);
+                    }
+                }
+            }
+        }
+
+        // Handle messages
+        Message m;
+        while(msgq_pop(&app.bus, &m)){
+            process_message(&app, &m);
+        }
+
+        // Simple idle: redraw draw area occasionally (optional)
+        // Here we keep it event-driven; uncomment for animation:
+        // struct timespec ts={0, 16*1000*1000}; nanosleep(&ts, NULL);
+    }
+
+cleanup:
+    glXMakeCurrent(app.dpy, None, NULL);
+    glXDestroyContext(app.dpy, app.glctx);
+    XFreeColormap(app.dpy, app.cmap);
+    XFree(app.vi);
+    XFreeGC(app.dpy, app.gc);
+    XDestroyWindow(app.dpy, app.main);
+    XCloseDisplay(app.dpy);
+    return 0;
+}
+
 #endif
 #ifdef TEST012 //freeglut (./mainwindow_demo): ERROR:  No display callback registered for window 1
 //gcc -g mainwindow_demo.c -o mainwindow_demo -lGL -lGLU -lglut

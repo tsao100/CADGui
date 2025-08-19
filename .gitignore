@@ -7,3 +7,4 @@ tinyspline.o
 motif_glx_spline.o
 mainwindow_demo
 parson.o
+mainwindow_demo
